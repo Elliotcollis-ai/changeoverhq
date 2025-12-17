@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useParams } from "next/navigation";
 
 import { SectionHeader } from "@/components/section-header";
 import { SummaryBubble } from "@/components/summary-bubble";
@@ -13,14 +12,7 @@ import {
     welcomePackDefaults,
 } from "@/lib/mock-workspace-defaults";
 
-type ExpandedKey = "beds" | "welcome" | "cleaning" | null;
-
-type BedType = "Double" | "King" | "Single" | "Bunk" | "Sofa bed";
-
-type BedRow = {
-    type: BedType;
-    count: number;
-};
+type ExpandedKey = "welcome" | "cleaning" | null;
 
 type TemplateItem = {
     id: string;
@@ -30,23 +22,13 @@ type TemplateItem = {
     isCustom?: boolean;
 };
 
-export default function PropertyDetailPage() {
-    const params = useParams<{ propertyId: string }>();
-    const propertyId = params.propertyId;
+export default function DefaultsPage() {
+    const [expanded, setExpanded] = useState<ExpandedKey>("welcome");
 
-    const [expanded, setExpanded] = useState<ExpandedKey>("beds");
-
-    // Mock config state (no persistence yet)
-    const [beds, setBeds] = useState<BedRow[]>([
-        { type: "Double", count: 1 },
-        { type: "Single", count: 2 },
-    ]);
-
-    // NEW: pull initial templates from workspace defaults
+    // Local-only (mock) workspace defaults state
     const [welcomeItems, setWelcomeItems] = useState<TemplateItem[]>(() =>
         cloneTemplateItems(welcomePackDefaults)
     );
-
     const [cleaningItems, setCleaningItems] = useState<TemplateItem[]>(() =>
         cloneTemplateItems(cleaningBundleDefaults)
     );
@@ -64,89 +46,22 @@ export default function PropertyDetailPage() {
         ].join(" ");
     }
 
-    const bedsTotal = useMemo(() => {
-        return beds.reduce((sum, b) => sum + (Number.isFinite(b.count) ? b.count : 0), 0);
-    }, [beds]);
-
-    const bedsConfigured = bedsTotal > 0;
-
     const welcomeEnabled = useMemo(() => welcomeItems.filter((i) => i.enabled), [welcomeItems]);
-    const welcomeConfigured = welcomeEnabled.length > 0;
-
     const cleaningEnabled = useMemo(() => cleaningItems.filter((i) => i.enabled), [cleaningItems]);
-    const cleaningConfigured = cleaningEnabled.length > 0;
-
-    const setupDoneCount = [bedsConfigured, welcomeConfigured, cleaningConfigured].filter(Boolean)
-        .length;
-
-    function nextIncompleteFrom(current: ExpandedKey): ExpandedKey {
-        const order: ExpandedKey[] = ["beds", "welcome", "cleaning"];
-        const startIndex = current ? Math.max(order.indexOf(current), 0) + 1 : 0;
-
-        const statusMap: Record<Exclude<ExpandedKey, null>, boolean> = {
-            beds: bedsConfigured,
-            welcome: welcomeConfigured,
-            cleaning: cleaningConfigured,
-        };
-
-        for (let i = startIndex; i < order.length; i++) {
-            const key = order[i];
-            if (key && !statusMap[key]) return key;
-        }
-
-        for (let i = 0; i < order.length; i++) {
-            const key = order[i];
-            if (key && !statusMap[key]) return key;
-        }
-
-        return null;
-    }
-
-    function handleDone(section: Exclude<ExpandedKey, null>) {
-        const next = nextIncompleteFrom(section);
-        setExpanded(next);
-    }
-
-    function doneLabelFor(section: Exclude<ExpandedKey, null>) {
-        const next = nextIncompleteFrom(section);
-        if (!next) return "Finish setup";
-        return "Done (next)";
-    }
-
-    const bedsSummary = useMemo(() => {
-        if (!bedsConfigured) return "Not set (add at least 1 bed)";
-        return `Configured ✓ • ${beds.map((b) => `${b.count} ${b.type}`).join(", ")}`;
-    }, [beds, bedsConfigured]);
 
     const welcomeSummary = useMemo(() => {
-        if (!welcomeConfigured) return "Not set (enable at least 1 item)";
+        if (welcomeEnabled.length === 0) return "Not set (enable at least 1 item)";
         const sample = welcomeEnabled.slice(0, 3).map((i) => i.name).join(" • ");
         const more = welcomeEnabled.length > 3 ? ` • +${welcomeEnabled.length - 3} more` : "";
         return `Configured ✓ • ${sample}${more}`;
-    }, [welcomeConfigured, welcomeEnabled]);
+    }, [welcomeEnabled]);
 
     const cleaningSummary = useMemo(() => {
-        if (!cleaningConfigured) return "Not set (enable at least 1 item)";
+        if (cleaningEnabled.length === 0) return "Not set (enable at least 1 item)";
         const sample = cleaningEnabled.slice(0, 3).map((i) => i.name).join(" • ");
         const more = cleaningEnabled.length > 3 ? ` • +${cleaningEnabled.length - 3} more` : "";
         return `Configured ✓ • ${sample}${more}`;
-    }, [cleaningConfigured, cleaningEnabled]);
-
-    function updateBedCount(index: number, next: number) {
-        setBeds((prev) => prev.map((row, i) => (i === index ? { ...row, count: next } : row)));
-    }
-
-    function updateBedType(index: number, nextType: BedType) {
-        setBeds((prev) => prev.map((row, i) => (i === index ? { ...row, type: nextType } : row)));
-    }
-
-    function addBedRow() {
-        setBeds((prev) => [...prev, { type: "Double", count: 1 }]);
-    }
-
-    function removeBedRow(index: number) {
-        setBeds((prev) => prev.filter((_, i) => i !== index));
-    }
+    }, [cleaningEnabled]);
 
     function toggleItem(itemsSetter: typeof setWelcomeItems, id: string) {
         itemsSetter((prev) => prev.map((i) => (i.id === id ? { ...i, enabled: !i.enabled } : i)));
@@ -169,103 +84,52 @@ export default function PropertyDetailPage() {
         itemsSetter((prev) => prev.filter((i) => i.id !== id));
     }
 
+    function resetWelcome() {
+        setWelcomeItems(cloneTemplateItems(welcomePackDefaults));
+    }
+
+    function resetCleaning() {
+        setCleaningItems(cloneTemplateItems(cleaningBundleDefaults));
+    }
+
     return (
         <div className="space-y-6">
             <SectionHeader
-                title="Property setup"
-                subtitle={`Property ID: ${propertyId} • ${setupDoneCount}/3 complete`}
+                title="Workspace defaults"
+                subtitle="Set your default welcome pack and cleaning bundle. New properties can start from these."
                 actions={
                     <Link
-                        href="/app/properties"
+                        href="/app/settings"
                         className="rounded-xl px-4 py-2 text-sm font-semibold border border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 transition text-center"
                     >
-                        Back to properties
+                        Back
                     </Link>
                 }
             />
 
-            <div className="space-y-3">
-                <SummaryBubble
-                    label="Beds configuration"
-                    summary={bedsSummary}
-                    isExpanded={expanded === "beds"}
-                    onClick={() => toggle("beds")}
-                    tone={bedsConfigured ? "primary" : "default"}
-                />
-                <div className={panelClasses(expanded === "beds")}>
-                    <div className="overflow-hidden">
-                        <div className="p-6 space-y-4">
-                            <div className="text-sm text-slate-700 dark:text-slate-200">
-                                Set bed types and counts. Later this will drive laundry quantities.
-                            </div>
-
-                            <div className="space-y-3">
-                                {beds.map((row, idx) => (
-                                    <div key={`${row.type}-${idx}`} className="flex gap-2">
-                                        <select
-                                            value={row.type}
-                                            onChange={(e) => updateBedType(idx, e.target.value as BedType)}
-                                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-slate-700"
-                                        >
-                                            <option>Double</option>
-                                            <option>King</option>
-                                            <option>Single</option>
-                                            <option>Bunk</option>
-                                            <option>Sofa bed</option>
-                                        </select>
-
-                                        <input
-                                            type="number"
-                                            min={0}
-                                            value={row.count}
-                                            onChange={(e) => updateBedCount(idx, Number(e.target.value))}
-                                            className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-slate-700"
-                                        />
-
-                                        <button
-                                            type="button"
-                                            onClick={() => removeBedRow(idx)}
-                                            className="rounded-xl px-3 py-2 text-sm font-semibold border border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 transition"
-                                        >
-                                            Remove
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-
-                            <div className="flex items-center justify-between gap-2">
-                                <button
-                                    type="button"
-                                    onClick={addBedRow}
-                                    className="rounded-xl px-4 py-2 text-sm font-semibold border border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 transition"
-                                >
-                                    Add bed type
-                                </button>
-
-                                <button
-                                    type="button"
-                                    onClick={() => handleDone("beds")}
-                                    className="rounded-xl px-4 py-2 text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white transition"
-                                >
-                                    {doneLabelFor("beds")}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-700 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
+                <div className="font-semibold text-slate-900 dark:text-slate-100">Heads up</div>
+                <div className="mt-1">
+                    This page is <span className="font-semibold">mock</span> for now — changes aren’t saved
+                    yet. Next step will be wiring these defaults into new properties.
                 </div>
+            </div>
 
+            <div className="space-y-3">
+                {/* Welcome pack defaults */}
                 <SummaryBubble
-                    label="Welcome pack template"
+                    label="Default welcome pack"
                     summary={welcomeSummary}
                     isExpanded={expanded === "welcome"}
                     onClick={() => toggle("welcome")}
-                    tone={welcomeConfigured ? "primary" : "default"}
+                    tone={welcomeEnabled.length > 0 ? "primary" : "default"}
                 />
+
                 <div className={panelClasses(expanded === "welcome")}>
                     <div className="overflow-hidden">
                         <div className="p-6 space-y-4">
                             <div className="text-sm text-slate-700 dark:text-slate-200">
-                                This property starts from workspace defaults — tweak as needed.
+                                Tick items on/off and set quantities. Add custom items if needed.
                             </div>
 
                             <div className="space-y-3">
@@ -331,28 +195,30 @@ export default function PropertyDetailPage() {
 
                                 <button
                                     type="button"
-                                    onClick={() => handleDone("welcome")}
+                                    onClick={resetWelcome}
                                     className="rounded-xl px-4 py-2 text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white transition"
                                 >
-                                    {doneLabelFor("welcome")}
+                                    Reset to starter defaults
                                 </button>
                             </div>
                         </div>
                     </div>
                 </div>
 
+                {/* Cleaning bundle defaults */}
                 <SummaryBubble
-                    label="Cleaning bundle template"
+                    label="Default cleaning bundle"
                     summary={cleaningSummary}
                     isExpanded={expanded === "cleaning"}
                     onClick={() => toggle("cleaning")}
-                    tone={cleaningConfigured ? "primary" : "default"}
+                    tone={cleaningEnabled.length > 0 ? "primary" : "default"}
                 />
+
                 <div className={panelClasses(expanded === "cleaning")}>
                     <div className="overflow-hidden">
                         <div className="p-6 space-y-4">
                             <div className="text-sm text-slate-700 dark:text-slate-200">
-                                This property starts from workspace defaults — tweak as needed.
+                                Cleaning supplies and consumables per changeover.
                             </div>
 
                             <div className="space-y-3">
@@ -418,27 +284,28 @@ export default function PropertyDetailPage() {
 
                                 <button
                                     type="button"
-                                    onClick={() => handleDone("cleaning")}
+                                    onClick={resetCleaning}
                                     className="rounded-xl px-4 py-2 text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white transition"
                                 >
-                                    {doneLabelFor("cleaning")}
+                                    Reset to starter defaults
                                 </button>
                             </div>
 
                             <div className="text-xs text-slate-600 dark:text-slate-300">
-                                Stock does not auto-decrement on completion (future setting).
+                                Inventory tracking and stock decrementing are future features.
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            {setupDoneCount === 3 && (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 shadow-sm dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-100">
-                    <div className="font-semibold">Setup complete ✓</div>
-                    <div className="mt-1">Nice — this property is ready for smooth changeovers.</div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-700 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
+                <div className="font-semibold text-slate-900 dark:text-slate-100">Next</div>
+                <div className="mt-1">
+                    Next step is to make new properties start from these defaults (still mock), then later
+                    persist them in a database.
                 </div>
-            )}
+            </div>
         </div>
     );
 }
