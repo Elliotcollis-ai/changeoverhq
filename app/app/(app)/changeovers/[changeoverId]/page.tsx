@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 
 import { PageHeader } from "@/components/page-header";
@@ -13,16 +13,61 @@ import { CleaningDetails } from "@/components/cleaning-details";
 
 type ExpandedKey = "datetime" | "cleaner" | "laundry" | "welcome" | "cleaning" | null;
 
+type ChangeoverRow = {
+    id: string;
+    propertyId: string;
+    propertyName: string;
+    date: string; // YYYY-MM-DD
+    status: "upcoming" | "today" | "completed";
+};
+
+const CHANGEOVERS_KEY = "changeoverhq.changeovers.v1";
+
+function safeParse<T>(raw: string): T | null {
+    try {
+        return JSON.parse(raw) as T;
+    } catch {
+        return null;
+    }
+}
+
+function loadChangeovers(): ChangeoverRow[] {
+    if (typeof window === "undefined") return [];
+    const raw = window.localStorage.getItem(CHANGEOVERS_KEY);
+    if (!raw) return [];
+    const parsed = safeParse<unknown>(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed as ChangeoverRow[];
+}
+
+function formatISODateLabel(iso: string): string {
+    // iso = YYYY-MM-DD
+    const [y, m, d] = iso.split("-").map((x) => Number(x));
+    const dt = new Date(y, m - 1, d);
+    // Close enough to your previous style (e.g. "Mon 8 Jan")
+    return new Intl.DateTimeFormat(undefined, {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+    }).format(dt);
+}
+
 export default function ChangeoverDetailPage() {
     const params = useParams<{ changeoverId: string }>();
     const changeoverId = params.changeoverId;
 
     const [expanded, setExpanded] = useState<ExpandedKey>(null);
 
-    // Mock data (intentional)
-    const propertyName = "Rose Cottage";
-    const dateLabel = "Mon 8 Jan";
-    const status: "upcoming" | "today" | "completed" = "upcoming";
+    const changeover = useMemo(() => {
+        if (typeof window === "undefined") return null;
+        const all = loadChangeovers();
+        return all.find((c) => c.id === changeoverId) ?? null;
+    }, [changeoverId]);
+
+    // Fallbacks if not found (keeps the page usable)
+    const propertyName = changeover?.propertyName ?? "Unknown property";
+    const dateLabel = changeover?.date ? formatISODateLabel(changeover.date) : "Unknown date";
+    const status: "upcoming" | "today" | "completed" = changeover?.status ?? "upcoming";
 
     const summaries = {
         datetime: "Arrive 11:00 • Leave 15:00",
@@ -49,6 +94,13 @@ export default function ChangeoverDetailPage() {
         <div className="space-y-6">
             <PageHeader propertyName={propertyName} dateLabel={dateLabel} status={status} />
 
+            {!changeover && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+                    This changeover wasn’t found in local storage. Go to Bookings and generate changeovers,
+                    then try again.
+                </div>
+            )}
+
             <div className="space-y-3">
                 <SummaryBubble
                     label="Date & time"
@@ -66,6 +118,12 @@ export default function ChangeoverDetailPage() {
                                     <div>
                                         <span className="font-semibold">Changeover ID:</span> {changeoverId}
                                     </div>
+                                    {changeover?.date && (
+                                        <div className="mt-2">
+                                            <span className="font-semibold">Changeover date:</span>{" "}
+                                            {formatISODateLabel(changeover.date)}
+                                        </div>
+                                    )}
                                     <div className="mt-2">Arrival window: 11:00</div>
                                     <div>Departure deadline: 15:00</div>
                                 </div>
