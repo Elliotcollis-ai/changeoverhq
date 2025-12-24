@@ -9,6 +9,8 @@ import { SummaryBubble } from "@/components/summary-bubble";
 import {
     cleaningBundleDefaults,
     cloneTemplateItems,
+    loadWorkspaceDefaults,
+    saveWorkspaceDefaults,
     welcomePackDefaults,
 } from "@/lib/mock-workspace-defaults";
 
@@ -25,13 +27,19 @@ type TemplateItem = {
 export default function DefaultsPage() {
     const [expanded, setExpanded] = useState<ExpandedKey>("welcome");
 
-    // Local-only (mock) workspace defaults state
-    const [welcomeItems, setWelcomeItems] = useState<TemplateItem[]>(() =>
-        cloneTemplateItems(welcomePackDefaults)
-    );
-    const [cleaningItems, setCleaningItems] = useState<TemplateItem[]>(() =>
-        cloneTemplateItems(cleaningBundleDefaults)
-    );
+    const stored = typeof window !== "undefined" ? loadWorkspaceDefaults() : null;
+
+    const [welcomeItems, setWelcomeItems] = useState<TemplateItem[]>(() => {
+        if (stored?.welcomePack) return cloneTemplateItems(stored.welcomePack);
+        return cloneTemplateItems(welcomePackDefaults);
+    });
+
+    const [cleaningItems, setCleaningItems] = useState<TemplateItem[]>(() => {
+        if (stored?.cleaningBundle) return cloneTemplateItems(stored.cleaningBundle);
+        return cloneTemplateItems(cleaningBundleDefaults);
+    });
+
+    const [banner, setBanner] = useState<null | { tone: "ok" | "warn"; text: string }>(null);
 
     function toggle(key: Exclude<ExpandedKey, null>) {
         setExpanded((prev) => (prev === key ? null : key));
@@ -86,10 +94,25 @@ export default function DefaultsPage() {
 
     function resetWelcome() {
         setWelcomeItems(cloneTemplateItems(welcomePackDefaults));
+        setBanner({ tone: "warn", text: "Reset welcome pack to starter defaults (not saved yet)." });
     }
 
     function resetCleaning() {
         setCleaningItems(cloneTemplateItems(cleaningBundleDefaults));
+        setBanner({ tone: "warn", text: "Reset cleaning bundle to starter defaults (not saved yet)." });
+    }
+
+    function save() {
+        const ok = saveWorkspaceDefaults({
+            welcomePack: welcomeItems,
+            cleaningBundle: cleaningItems,
+        });
+
+        setBanner(
+            ok
+                ? { tone: "ok", text: "Saved. New properties will start from these defaults." }
+                : { tone: "warn", text: "Could not save to browser storage. Try again." }
+        );
     }
 
     return (
@@ -107,16 +130,38 @@ export default function DefaultsPage() {
                 }
             />
 
+            {banner && (
+                <div
+                    className={[
+                        "rounded-2xl border p-4 text-sm shadow-sm",
+                        banner.tone === "ok"
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-100"
+                            : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100",
+                    ].join(" ")}
+                >
+                    {banner.text}
+                </div>
+            )}
+
             <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-700 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
-                <div className="font-semibold text-slate-900 dark:text-slate-100">Heads up</div>
+                <div className="font-semibold text-slate-900 dark:text-slate-100">How it works</div>
                 <div className="mt-1">
-                    This page is <span className="font-semibold">mock</span> for now — changes aren’t saved
-                    yet. Next step will be wiring these defaults into new properties.
+                    Edit your defaults, then hit <span className="font-semibold">Save</span>. We’ll store them
+                    in this browser (temporary until we add a database).
+                </div>
+
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                    <button
+                        type="button"
+                        onClick={save}
+                        className="rounded-xl px-4 py-2 text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white transition"
+                    >
+                        Save defaults
+                    </button>
                 </div>
             </div>
 
             <div className="space-y-3">
-                {/* Welcome pack defaults */}
                 <SummaryBubble
                     label="Default welcome pack"
                     summary={welcomeSummary}
@@ -205,7 +250,6 @@ export default function DefaultsPage() {
                     </div>
                 </div>
 
-                {/* Cleaning bundle defaults */}
                 <SummaryBubble
                     label="Default cleaning bundle"
                     summary={cleaningSummary}
@@ -296,14 +340,6 @@ export default function DefaultsPage() {
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-700 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
-                <div className="font-semibold text-slate-900 dark:text-slate-100">Next</div>
-                <div className="mt-1">
-                    Next step is to make new properties start from these defaults (still mock), then later
-                    persist them in a database.
                 </div>
             </div>
         </div>

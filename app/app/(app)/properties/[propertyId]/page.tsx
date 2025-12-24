@@ -10,6 +10,7 @@ import { SummaryBubble } from "@/components/summary-bubble";
 import {
     cleaningBundleDefaults,
     cloneTemplateItems,
+    loadWorkspaceDefaults,
     welcomePackDefaults,
 } from "@/lib/mock-workspace-defaults";
 
@@ -30,26 +31,137 @@ type TemplateItem = {
     isCustom?: boolean;
 };
 
+type PropertyConfig = {
+    beds: BedRow[];
+    welcomePack: TemplateItem[];
+    cleaningBundle: TemplateItem[];
+};
+
 export default function PropertyDetailPage() {
     const params = useParams<{ propertyId: string }>();
     const propertyId = params.propertyId;
 
     const [expanded, setExpanded] = useState<ExpandedKey>("beds");
 
-    // Mock config state (no persistence yet)
-    const [beds, setBeds] = useState<BedRow[]>([
-        { type: "Double", count: 1 },
-        { type: "Single", count: 2 },
-    ]);
+    const seedKey = `changeoverhq.property.${propertyId}.seed.v1`;
+    const configKey = `changeoverhq.property.${propertyId}.config.v1`;
 
-    // NEW: pull initial templates from workspace defaults
-    const [welcomeItems, setWelcomeItems] = useState<TemplateItem[]>(() =>
-        cloneTemplateItems(welcomePackDefaults)
-    );
+    function safeParseConfig(raw: string): PropertyConfig | null {
+        try {
+            const parsed = JSON.parse(raw) as Partial<PropertyConfig>;
+            if (!parsed || typeof parsed !== "object") return null;
 
-    const [cleaningItems, setCleaningItems] = useState<TemplateItem[]>(() =>
-        cloneTemplateItems(cleaningBundleDefaults)
-    );
+            if (!Array.isArray(parsed.beds)) return null;
+            if (!Array.isArray(parsed.welcomePack)) return null;
+            if (!Array.isArray(parsed.cleaningBundle)) return null;
+
+            return {
+                beds: parsed.beds as BedRow[],
+                welcomePack: parsed.welcomePack as TemplateItem[],
+                cleaningBundle: parsed.cleaningBundle as TemplateItem[],
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    function readStoredConfig(): PropertyConfig | null {
+        if (typeof window === "undefined") return null;
+        const raw = window.localStorage.getItem(configKey);
+        if (!raw) return null;
+        return safeParseConfig(raw);
+    }
+
+    function readSeed(): { welcomePack: TemplateItem[]; cleaningBundle: TemplateItem[] } | null {
+        if (typeof window === "undefined") return null;
+        try {
+            const raw = window.localStorage.getItem(seedKey);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw) as { welcomePack?: unknown; cleaningBundle?: unknown };
+            if (!Array.isArray(parsed.welcomePack) || !Array.isArray(parsed.cleaningBundle)) return null;
+            return {
+                welcomePack: parsed.welcomePack as TemplateItem[],
+                cleaningBundle: parsed.cleaningBundle as TemplateItem[],
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    function writeSeed(seed: { welcomePack: TemplateItem[]; cleaningBundle: TemplateItem[] }) {
+        if (typeof window === "undefined") return;
+        try {
+            window.localStorage.setItem(seedKey, JSON.stringify(seed));
+        } catch {
+            // ignore
+        }
+    }
+
+    function ensureSeed(): { welcomePack: TemplateItem[]; cleaningBundle: TemplateItem[] } {
+        const existing = readSeed();
+        if (existing) {
+            return {
+                welcomePack: cloneTemplateItems(existing.welcomePack),
+                cleaningBundle: cloneTemplateItems(existing.cleaningBundle),
+            };
+        }
+
+        const storedDefaults = loadWorkspaceDefaults();
+        const seed = {
+            welcomePack: cloneTemplateItems(storedDefaults?.welcomePack ?? welcomePackDefaults),
+            cleaningBundle: cloneTemplateItems(storedDefaults?.cleaningBundle ?? cleaningBundleDefaults),
+        };
+
+        writeSeed(seed);
+        return {
+            welcomePack: cloneTemplateItems(seed.welcomePack),
+            cleaningBundle: cloneTemplateItems(seed.cleaningBundle),
+        };
+    }
+
+    // 1) Try load saved property config (if user previously clicked Save)
+    // 2) Else seed from workspace defaults ONCE
+    const storedConfig = typeof window !== "undefined" ? readStoredConfig() : null;
+    const seed = typeof window !== "undefined" ? ensureSeed() : null;
+
+    const [beds, setBeds] = useState<BedRow[]>(() => {
+        if (storedConfig?.beds) return storedConfig.beds;
+        return [
+            { type: "Double", count: 1 },
+            { type: "Single", count: 2 },
+        ];
+    });
+
+    const [welcomeItems, setWelcomeItems] = useState<TemplateItem[]>(() => {
+        if (storedConfig?.welcomePack) return cloneTemplateItems(storedConfig.welcomePack);
+        if (seed) return cloneTemplateItems(seed.welcomePack);
+        return cloneTemplateItems(welcomePackDefaults);
+    });
+
+    const [cleaningItems, setCleaningItems] = useState<TemplateItem[]>(() => {
+        if (storedConfig?.cleaningBundle) return cloneTemplateItems(storedConfig.cleaningBundle);
+        if (seed) return cloneTemplateItems(seed.cleaningBundle);
+        return cloneTemplateItems(cleaningBundleDefaults);
+    });
+
+    const [banner, setBanner] = useState<null | { tone: "ok" | "warn"; text: string }>(null);
+
+    function saveProperty() {
+        if (typeof window === "undefined") return;
+
+        const payload: PropertyConfig = {
+            beds,
+            welcomePack: welcomeItems,
+            cleaningBundle: cleaningItems,
+        };
+
+        try {
+            window.localStorage.setItem(configKey, JSON.stringify(payload));
+            setBanner({ tone: "ok", text: "Saved. This property is now independent of workspace defaults." });
+        } catch {
+            setBanner({ tone: "warn", text: "Could not save to browser storage. Try again." });
+        }
+    }
 
     function toggle(key: Exclude<ExpandedKey, null>) {
         setExpanded((prev) => (prev === key ? null : key));
@@ -175,14 +287,37 @@ export default function PropertyDetailPage() {
                 title="Property setup"
                 subtitle={`Property ID: ${propertyId} • ${setupDoneCount}/3 complete`}
                 actions={
-                    <Link
-                        href="/app/properties"
-                        className="rounded-xl px-4 py-2 text-sm font-semibold border border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 transition text-center"
-                    >
-                        Back to properties
-                    </Link>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <button
+                            type="button"
+                            onClick={saveProperty}
+                            className="rounded-xl px-4 py-2 text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white transition text-center"
+                        >
+                            Save changes
+                        </button>
+
+                        <Link
+                            href="/app/properties"
+                            className="rounded-xl px-4 py-2 text-sm font-semibold border border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800 transition text-center"
+                        >
+                            Back to properties
+                        </Link>
+                    </div>
                 }
             />
+
+            {banner && (
+                <div
+                    className={[
+                        "rounded-2xl border p-4 text-sm shadow-sm",
+                        banner.tone === "ok"
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-100"
+                            : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100",
+                    ].join(" ")}
+                >
+                    {banner.text}
+                </div>
+            )}
 
             <div className="space-y-3">
                 <SummaryBubble
@@ -265,7 +400,7 @@ export default function PropertyDetailPage() {
                     <div className="overflow-hidden">
                         <div className="p-6 space-y-4">
                             <div className="text-sm text-slate-700 dark:text-slate-200">
-                                This property starts from workspace defaults — tweak as needed.
+                                This property starts from workspace defaults (seeded once) — tweak as needed.
                             </div>
 
                             <div className="space-y-3">
@@ -352,7 +487,7 @@ export default function PropertyDetailPage() {
                     <div className="overflow-hidden">
                         <div className="p-6 space-y-4">
                             <div className="text-sm text-slate-700 dark:text-slate-200">
-                                This property starts from workspace defaults — tweak as needed.
+                                This property starts from workspace defaults (seeded once) — tweak as needed.
                             </div>
 
                             <div className="space-y-3">
