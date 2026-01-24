@@ -14,7 +14,7 @@ import {
     welcomePackDefaults,
 } from "@/lib/mock-workspace-defaults";
 
-type ExpandedKey = "beds" | "welcome" | "cleaning" | null;
+type ExpandedKey = "stock" | "beds" | "welcome" | "cleaning" | null;
 
 type BedType = "Double" | "King" | "Single" | "Bunk" | "Sofa bed";
 
@@ -32,16 +32,30 @@ type TemplateItem = {
 };
 
 type PropertyConfig = {
+    stockLocationId?: string | null; // NEW (backwards compatible)
     beds: BedRow[];
     welcomePack: TemplateItem[];
     cleaningBundle: TemplateItem[];
 };
 
+type StockLocation = {
+    id: string;
+    name: string;
+    isActive: boolean;
+};
+
+type StockLocationsState = {
+    locations: StockLocation[];
+    defaultLocationId: string | null;
+};
+
+const STOCK_LOCATIONS_KEY = "changeoverhq.stockLocations.v1";
+
 export default function PropertyDetailPage() {
     const params = useParams<{ propertyId: string }>();
     const propertyId = params.propertyId;
 
-    const [expanded, setExpanded] = useState<ExpandedKey>("beds");
+    const [expanded, setExpanded] = useState<ExpandedKey>("stock");
 
     const seedKey = `changeoverhq.property.${propertyId}.seed.v1`;
     const configKey = `changeoverhq.property.${propertyId}.config.v1`;
@@ -56,6 +70,8 @@ export default function PropertyDetailPage() {
             if (!Array.isArray(parsed.cleaningBundle)) return null;
 
             return {
+                stockLocationId:
+                    typeof parsed.stockLocationId === "string" ? parsed.stockLocationId : (parsed.stockLocationId ?? null),
                 beds: parsed.beds as BedRow[],
                 welcomePack: parsed.welcomePack as TemplateItem[],
                 cleaningBundle: parsed.cleaningBundle as TemplateItem[],
@@ -70,6 +86,42 @@ export default function PropertyDetailPage() {
         const raw = window.localStorage.getItem(configKey);
         if (!raw) return null;
         return safeParseConfig(raw);
+    }
+
+    function safeParse<T>(raw: string): T | null {
+        try {
+            return JSON.parse(raw) as T;
+        } catch {
+            return null;
+        }
+    }
+
+    function loadStockLocations(): StockLocationsState {
+        if (typeof window === "undefined") return { locations: [], defaultLocationId: null };
+
+        const raw = window.localStorage.getItem(STOCK_LOCATIONS_KEY);
+        if (!raw) return { locations: [], defaultLocationId: null };
+
+        const parsed = safeParse<unknown>(raw);
+        if (!parsed || typeof parsed !== "object") return { locations: [], defaultLocationId: null };
+
+        const obj = parsed as Partial<StockLocationsState>;
+        const locations = Array.isArray(obj.locations) ? (obj.locations as StockLocation[]) : [];
+        const defaultLocationId = typeof obj.defaultLocationId === "string" ? obj.defaultLocationId : null;
+
+        const cleaned = locations
+            .filter((l) => l && typeof l.id === "string" && typeof l.name === "string")
+            .map((l) => ({
+                id: l.id,
+                name: l.name.trim() || "Untitled location",
+                isActive: typeof l.isActive === "boolean" ? l.isActive : true,
+            }));
+
+        const defaultStillExists = defaultLocationId && cleaned.some((l) => l.id === defaultLocationId);
+        return {
+            locations: cleaned,
+            defaultLocationId: defaultStillExists ? defaultLocationId : (cleaned[0]?.id ?? null),
+        };
     }
 
     function readSeed(): { welcomePack: TemplateItem[]; cleaningBundle: TemplateItem[] } | null {
@@ -124,6 +176,34 @@ export default function PropertyDetailPage() {
     const storedConfig = typeof window !== "undefined" ? readStoredConfig() : null;
     const seed = typeof window !== "undefined" ? ensureSeed() : null;
 
+    // Load stock locations once (read-only in this page)
+    const stockLocationsState = typeof window !== "undefined" ? loadStockLocations() : { locations: [], defaultLocationId: null };
+
+    function computeInitialStockLocationId(): string | null {
+        // 1) property saved
+        if (storedConfig && typeof storedConfig.stockLocationId === "string" && storedConfig.stockLocationId.trim().length > 0) {
+            return storedConfig.stockLocationId;
+        }
+
+        // 2) workspace default (prefer active)
+        if (stockLocationsState.defaultLocationId) {
+            const def = stockLocationsState.locations.find((l) => l.id === stockLocationsState.defaultLocationId);
+            if (def) return def.id;
+        }
+
+        // 3) first active
+        const firstActive = stockLocationsState.locations.find((l) => l.isActive);
+        if (firstActive) return firstActive.id;
+
+        // 4) none
+        return null;
+    }
+
+    const [stockLocationId, setStockLocationId] = useState<string | null>(() => {
+        if (typeof window === "undefined") return null;
+        return computeInitialStockLocationId();
+    });
+
     const [beds, setBeds] = useState<BedRow[]>(() => {
         if (storedConfig?.beds) return storedConfig.beds;
         return [
@@ -150,6 +230,7 @@ export default function PropertyDetailPage() {
         if (typeof window === "undefined") return;
 
         const payload: PropertyConfig = {
+            stockLocationId,
             beds,
             welcomePack: welcomeItems,
             cleaningBundle: cleaningItems,
@@ -188,14 +269,23 @@ export default function PropertyDetailPage() {
     const cleaningEnabled = useMemo(() => cleaningItems.filter((i) => i.enabled), [cleaningItems]);
     const cleaningConfigured = cleaningEnabled.length > 0;
 
-    const setupDoneCount = [bedsConfigured, welcomeConfigured, cleaningConfigured].filter(Boolean)
-        .length;
+    const activeLocations = useMemo(() => stockLocationsState.locations.filter((l) => l.isActive), [stockLocationsState.locations]);
+
+    const selectedLocation = useMemo(() => {
+        if (!stockLocationId) return null;
+        return stockLocationsState.locations.find((l) => l.id === stockLocationId) ?? null;
+    }, [stockLocationsState.locations, stockLocationId]);
+
+    const stockConfigured = Boolean(stockLocationId);
+
+    const setupDoneCount = [stockConfigured, bedsConfigured, welcomeConfigured, cleaningConfigured].filter(Boolean).length;
 
     function nextIncompleteFrom(current: ExpandedKey): ExpandedKey {
-        const order: ExpandedKey[] = ["beds", "welcome", "cleaning"];
+        const order: ExpandedKey[] = ["stock", "beds", "welcome", "cleaning"];
         const startIndex = current ? Math.max(order.indexOf(current), 0) + 1 : 0;
 
         const statusMap: Record<Exclude<ExpandedKey, null>, boolean> = {
+            stock: stockConfigured,
             beds: bedsConfigured,
             welcome: welcomeConfigured,
             cleaning: cleaningConfigured,
@@ -224,6 +314,16 @@ export default function PropertyDetailPage() {
         if (!next) return "Finish setup";
         return "Done (next)";
     }
+
+    const stockSummary = useMemo(() => {
+        if (!stockConfigured) {
+            if (activeLocations.length === 0) return "No locations yet (create one in Stock Locations)";
+            return "Not set (choose a location)";
+        }
+        if (!selectedLocation) return "Selected location not found";
+        const suffix = selectedLocation.isActive ? "" : " (inactive)";
+        return `Configured ✓ • ${selectedLocation.name}${suffix}`;
+    }, [stockConfigured, selectedLocation, activeLocations.length]);
 
     const bedsSummary = useMemo(() => {
         if (!bedsConfigured) return "Not set (add at least 1 bed)";
@@ -285,7 +385,7 @@ export default function PropertyDetailPage() {
         <div className="space-y-6">
             <SectionHeader
                 title="Property setup"
-                subtitle={`Property ID: ${propertyId} • ${setupDoneCount}/3 complete`}
+                subtitle={`Property ID: ${propertyId} • ${setupDoneCount}/4 complete`}
                 actions={
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         <button
@@ -320,6 +420,77 @@ export default function PropertyDetailPage() {
             )}
 
             <div className="space-y-3">
+                <SummaryBubble
+                    label="Stock location"
+                    summary={stockSummary}
+                    isExpanded={expanded === "stock"}
+                    onClick={() => toggle("stock")}
+                    tone={stockConfigured ? "primary" : "default"}
+                />
+                <div className={panelClasses(expanded === "stock")}>
+                    <div className="overflow-hidden">
+                        <div className="p-6 space-y-4">
+                            <div className="text-sm text-slate-700 dark:text-slate-200">
+                                Choose where supplies are stored for this property. Shopping lists will group by location later.
+                            </div>
+
+                            {activeLocations.length === 0 ? (
+                                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+                                    <div className="font-semibold">No stock locations yet</div>
+                                    <div className="mt-1">
+                                        Create one in <span className="font-semibold">Stock Locations</span>, then come back here.
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">Location</div>
+                                    <select
+                                        value={stockLocationId ?? ""}
+                                        onChange={(e) => setStockLocationId(e.target.value || null)}
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-slate-700"
+                                    >
+                                        <option value="">Select a location…</option>
+
+                                        {/* Active locations */}
+                                        {activeLocations.map((l) => (
+                                            <option key={l.id} value={l.id}>
+                                                {l.name}
+                                            </option>
+                                        ))}
+
+                                        {/* If selected location is inactive, still show it so it doesn't "disappear" */}
+                                        {selectedLocation && !selectedLocation.isActive && (
+                                            <option value={selectedLocation.id}>
+                                                {selectedLocation.name} (inactive)
+                                            </option>
+                                        )}
+                                    </select>
+
+                                    <div className="text-xs text-slate-600 dark:text-slate-300">
+                                        Workspace default:{" "}
+                                        <span className="font-semibold">
+                                            {stockLocationsState.defaultLocationId
+                                                ? stockLocationsState.locations.find((l) => l.id === stockLocationsState.defaultLocationId)?.name ??
+                                                "Unknown"
+                                                : "None"}
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="flex items-center justify-end gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => handleDone("stock")}
+                                    className="rounded-xl px-4 py-2 text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white transition"
+                                >
+                                    {doneLabelFor("stock")}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <SummaryBubble
                     label="Beds configuration"
                     summary={bedsSummary}
@@ -568,7 +739,7 @@ export default function PropertyDetailPage() {
                 </div>
             </div>
 
-            {setupDoneCount === 3 && (
+            {setupDoneCount === 4 && (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 shadow-sm dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-100">
                     <div className="font-semibold">Setup complete ✓</div>
                     <div className="mt-1">Nice — this property is ready for smooth changeovers.</div>
